@@ -164,3 +164,13 @@ export {
   type Subscriber,
   type Unsubscribe,
 } from './events';
+
+export {
+  scanDir,
+  scanSource,
+  formatReport,
+  type Finding,
+  type ScanOptions,
+} from './scanner';
+
+export { securityHeaders, type HeaderOptions } from './headers';

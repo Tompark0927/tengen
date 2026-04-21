@@ -18,14 +18,16 @@ import { join, resolve } from 'node:path';
 import { argv, exit, stderr, stdout } from 'node:process';
 import { deploy, run } from '../lib/tengen/deploy';
 import { deploymentRoot } from '../lib/tengen/integrity';
+import { formatReport, scanDir } from '../lib/tengen/scanner';
 
 const USAGE = `tengen <command> [args]
 
 Commands:
-  deploy <source-file> <out-dir> [--nodes N] [--decoys M] [--difficulty D] [--ttl-ms T]
-  run    <pkg-dir>
-  verify <pkg-dir>
-  audit
+  scan    <project-dir>                  — static vuln scan (SQLi, eval, XSS, secrets, …)
+  deploy  <source-file> <out-dir> [--nodes N] [--decoys M] [--difficulty D] [--ttl-ms T]
+  run     <pkg-dir>
+  verify  <pkg-dir>
+  audit                                   — run the adversarial self-audit
   version
 
 Notes:
@@ -209,6 +211,19 @@ const cmdAudit = async (): Promise<void> => {
   await import('../lib/tengen/audit');
 };
 
+// -------- scan ------------------------------------------------------------
+
+const cmdScan = async (args: string[]): Promise<void> => {
+  const [dir] = args;
+  if (!dir) fail('usage: tengen scan <project-dir>', 2);
+  const findings = await scanDir(resolve(dir));
+  stdout.write(formatReport(findings));
+  // Non-zero exit if any critical/high so CI can gate on it.
+  if (findings.some((f) => f.severity === 'critical' || f.severity === 'high')) {
+    exit(2);
+  }
+};
+
 // -------- dispatch --------------------------------------------------------
 
 const main = async (): Promise<void> => {
@@ -225,6 +240,9 @@ const main = async (): Promise<void> => {
       return;
     case 'audit':
       await cmdAudit();
+      return;
+    case 'scan':
+      await cmdScan(rest);
       return;
     case 'version':
       stdout.write('tengen 0.0.1-research (pre-audit)\n');

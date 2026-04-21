@@ -1,146 +1,183 @@
 # Tengen
 
-Research-grade stealth security architecture. A library for data sharding,
-metadata-less storage, FROST threshold signing, and tamper-evident runtime
-execution.
+> You shipped an app. You wrote most of it with AI help. You're not sure
+> it's secure. You don't want to become a security engineer. You just
+> want to stop worrying.
+
+That's the person Tengen is for.
+
+Tengen does three things, in order of how quickly they help you:
+
+1. **`tengen scan`** — static-analyzes your JS/TS codebase and reports
+   the vulnerability classes AI coders commonly ship: SQL injection,
+   `eval()`, `dangerouslySetInnerHTML`, hardcoded API keys, `Math.random`
+   used for tokens, unvalidated `JSON.parse(req.body)`, open redirects,
+   CORS wildcard with credentials, server env vars leaked into client
+   components. Each finding explains what's wrong and how to fix it.
+
+2. **`securityHeaders()` + `ward`** — drop-in helpers for hardening a
+   live app without a rewrite: a CSP / HSTS / framing header factory,
+   a `gate()` that Zod-validates request bodies without throwing, a
+   tagged-template `paramOnly` that forces parameterized SQL, and
+   output encoders for HTML / attributes / URLs.
+
+3. **Encrypted data-at-rest primitives** — if you want stronger
+   defense-in-depth, Tengen ships a full FROST-Ed25519 threshold
+   signing stack, Shamir-sharded data scatter, an oblivious-fetch
+   pattern, and a fragmented-execution runtime. These are for people
+   who want the full protocol; most people should start with (1) and (2).
 
 ---
 
 ## ⚠️ STATUS: PRE-AUDIT RESEARCH CODE
 
-**Do not use with data whose compromise would cause real-world harm.**
+**Do not use Tengen with data whose compromise would cause real-world harm.**
 
-This code has NOT been reviewed by an independent cryptographic auditor.
-The cryptographic primitives (AES-GCM, HKDF, Ed25519, X25519) come from
-audited libraries (Web Crypto, `@noble/curves`, `@noble/hashes`), but the
-protocol glue — FROST wrapper, Shamir x-coordinate Lagrange interpolation,
-shatter/scatter encoding, update binding, Merkle canonicalization — is
-original to this repository and has been reviewed only by the author and
-the LLM that co-authored it.
-
-Before using Tengen with any production data:
-
-1. Commission an external cryptographic audit (Trail of Bits, NCC Group,
-   Cure53, or similar). Budget USD $30–50k and 2–4 weeks.
-2. Obtain legal counsel for your jurisdiction regarding data protection
-   law, terms of service, and liability limitation.
-3. Write an EULA that explicitly disclaims suitability for any purpose.
-   Note that some jurisdictions void "as-is" disclaimers for
-   consumer-facing software.
-4. Run a time-limited closed pilot with internal data only and a
-   documented incident-response plan.
-
-No one associated with this repository — including AI co-authors — will
-indemnify you against losses arising from use of this code. See LICENSE.
+No independent cryptographic auditor has reviewed this repository.
+Primitives come from audited libraries (Web Crypto, `@noble/curves`,
+`@noble/hashes`), but the composition — FROST wrapper, shatter/scatter
+encoding, update binding, Merkle canonicalization, scanner patterns —
+is original and has not been externally reviewed. Before any
+production use, commission an audit (`AUDIT_RFP.md` is ready to send).
 
 ---
 
-## Architecture
+## Install
 
-No UI. No database. No server-side state. Everything happens either at
-build time, in RAM at runtime, or via offline cryptographic operations.
+Requires **Node 22+**.
 
-Components (alphabetical):
+```bash
+git clone https://github.com/Tompark0927/tengen
+cd tengen
+npm install
+```
 
-- **`channel.ts`** — output-chained PoW puzzle + 1 ms TTL key channel.
-- **`deploy.ts`** — top-level `deploy() / run()` API.
-- **`entrance.ts`** — DB-less public request handler factory.
-- **`ephemeral.ts`** — per-session secret + one-shot route tokens.
-- **`fragment.ts`** — source → shuffled blobs + encrypted entry envelope.
-- **`frost.ts`** — FROST-Ed25519 threshold Schnorr (trusted-dealer).
-- **`integrity.ts`** — Merkle root over blob set + `obliviousFetchAll()`.
-- **`lightspeed.ts`** — great-circle RTT anomaly detector.
-- **`maze.ts`** — deterministic decoy router.
-- **`observer.ts`** — advisory debugger/devtools detection.
-- **`poison.ts`** — honey-data record forging with passive tripwires.
-- **`quorum.ts`** — m-of-n approval wrapper around FROST.
-- **`shatter.ts`** — k-of-n Shamir DEK split + encrypted-shard scatter.
-- **`updater.ts`** — FROST-signed + X25519-wrapped package handoff.
-- **`ward.ts`** — Zod-gated input, sink-aware output encoding.
-- **`dkg.ts`** — Pedersen distributed key generation (no trusted dealer).
-- **`audit.ts`** — adversarial self-audit, runnable via `npm run audit`.
-- **`fuzz.ts`** — randomized input harness, runnable via `npm run fuzz`.
-- **`bench.ts`** — performance + bandwidth measurements, `npm run bench`.
+## 60-second demo
 
-Each file's top-of-file comment carries an explicit **Security Boundary**
-block listing what it does and does NOT defend against.
+```bash
+# 1. Scan a project for AI-coder vulnerabilities
+npm run tengen -- scan ./your-app/src
+# → "7 findings (4 critical, 1 high, 2 medium)" with file:line, reason, fix
+
+# 2. Add security headers to a Next.js app (middleware.ts)
+#    import { securityHeaders } from 'tengen';
+#    const h = securityHeaders({ csp: 'next-app' });
+#    for (const [k, v] of Object.entries(h)) res.headers.set(k, v);
+
+# 3. Harden a SQL query
+#    import { paramOnly } from 'tengen';
+#    const q = paramOnly`SELECT * FROM users WHERE id=${id}`;
+#    db.query(q.text, q.values);  // attacker cannot inject
+
+# 4. Stop logging deploy keys by accident (if you use Tengen's shatter)
+#    const pub = serializePublic(pkg);       // safe to publish
+#    const key = serializeDeployKey(pkg);    // treat as password
+```
+
+## What the scanner catches
+
+| Class | Example line the scanner flags |
+|-------|-------------------------------|
+| SQLI-TEMPLATE | `` `SELECT * FROM t WHERE id = ${userId}` `` |
+| EVAL | `eval(req.body.code)` / `new Function(input)` |
+| INNERHTML | `el.innerHTML = someVar` |
+| DANGEROUSLY-SET-INNERHTML | `dangerouslySetInnerHTML={{ __html: bio }}` |
+| HARDCODED-SECRET | `const key = 'sk_live_...'` (Stripe, GitHub, Slack, AWS, OpenAI, Google) |
+| JWT-HARDCODED-SECRET | `jwt.sign(payload, 'supersecret')` |
+| MATH-RANDOM-SECURITY | `const token = Math.random().toString(36)` |
+| JSON-PARSE-REQUEST | `JSON.parse(req.body)` with no schema |
+| OPEN-REDIRECT | `res.redirect(req.query.next)` |
+| CORS-WILDCARD-CREDENTIALS | `cors({ origin: '*', credentials: true })` |
+| EXPOSED-ENV-CLIENT | `process.env.DATABASE_URL` in a `'use client'` file |
+
+The scanner is intentionally **noisy over missing things**: it prefers
+false positives (review quickly) to false negatives (silent breach).
+It is NOT a sound static analyzer — pair with CodeQL or Semgrep before
+shipping anything non-trivial.
+
+## CLI
+
+```bash
+tengen scan <project-dir>                   # vuln report; exits 2 if critical/high found
+tengen deploy <source-file> <out-dir>        # encrypt + fragment a file
+tengen verify <pkg-dir>                      # recompute Merkle root
+tengen run    <pkg-dir>                      # execute chain, recover source to stdout
+tengen audit                                 # run the adversarial self-audit
+tengen version
+```
+
+## Library surface
+
+Everything re-exported from the root:
+
+```ts
+import {
+  // Scanner + hardening helpers (start here)
+  scanDir, formatReport, securityHeaders, gate, paramOnly, escHtml, canonicalize,
+
+  // Encrypted data at rest
+  shatter, reassemble, sealManifest, openManifest,
+
+  // Deployment protocol
+  deploy, run, serializePublic, serializeDeployKey,
+
+  // FROST threshold signing (DKG or trusted-dealer)
+  dealShares, commit, approve, aggregateApprovals, verifyApproval,
+  dkgSimulate, dkgStart, dkgShareFor, dkgAcceptShare, dkgFinalize,
+
+  // Signed updates
+  sealUpdate, installUpdate, generateInstallerKeypair,
+
+  // Local-only event bus + risk scoring
+  bus, newEventBus,
+} from 'tengen';
+```
+
+Each module carries a **Security Boundary** comment block enumerating
+what it does and does NOT defend against.
+
+## Scripts
+
+```bash
+npm run typecheck
+npm test            # 95 unit + integration tests
+npm run audit       # adversarial self-audit (12 attack scenarios)
+npm run fuzz        # randomized input harness (2000+ runs)
+npm run bench       # performance + oblivious-fetch multipliers
+npm run sbom        # generate CycloneDX software bill of materials
+npm run tengen      # CLI entry point
+```
 
 ## Layout
 
 ```
 tengen/
 ├── src/
-│   ├── lib/tengen/     Library modules + their unit + audit scripts
-│   └── cli/tengen.ts   Command-line harness (deploy/run/verify/audit)
-├── loader/             Go RAM-only loader (mlock + Ed25519 + scrub)
-├── package.json
-├── tsconfig.json
-└── README.md (this file)
+│   ├── lib/tengen/    # library modules (scanner, headers, crypto, runtime)
+│   └── cli/tengen.ts  # CLI harness
+├── loader/             # Go RAM-only loader (mlock + Ed25519 + scrub)
+├── .github/workflows/ci.yml
+├── AUDIT_RFP.md        # ready-to-send external-audit specification
+├── NOTICE.md           # license rationale + dep licenses
+└── LICENSE             # PolyForm Noncommercial 1.0.0
 ```
 
-No `next/`, no `react/`, no `src/app/`, no `src/pages/`. UI code is an
-unnecessary attack surface and has been deliberately omitted.
+## Threat model
 
-## Build & run
+**Defends against**: passive network observers, reconnaissance scans,
+per-byte blob tampering, update bait-and-switch, quorum share leakage
+via wire observation, static vulnerability patterns common in AI-written
+code, missing HTTP security headers, unparameterized SQL, XSS via
+`innerHTML`/`dangerouslySetInnerHTML`, weak randomness for security
+tokens.
 
-Requires **Node 22+** (the test runner relies on `node --test` glob support
-that landed in 22).
+**Does NOT defend against**: side-channel attacks (cache/power/EM),
+compromise of a signer's long-term key, a determined reverse engineer
+on the runtime host, denial of service, sovereign / legal compulsion,
+application-logic bugs in code the scanner didn't flag, runtime
+compromise of the machine running Tengen itself.
 
-```bash
-npm install
-npm run typecheck
-npm test        # unit + integration tests
-npm run audit   # adversarial audit script
-npm run fuzz    # randomized input harness (~1–2 min at defaults)
-npm run bench   # perf + oblivious-fetch multiplier table
-```
+## License
 
-An external cryptographic audit is a prerequisite for production use; see
-`AUDIT_RFP.md` for scope and reviewer instructions.
-
-## CLI
-
-```bash
-npm run tengen -- help
-
-# Deploy a source file into a package directory
-npm run tengen -- deploy mysource.txt ./pkg --nodes 64 --decoys 128
-
-# Verify the Merkle root of a package (no execution)
-npm run tengen -- verify ./pkg
-
-# Execute the chain; reassembled source goes to stdout
-npm run tengen -- run ./pkg > recovered.txt
-
-# Run the adversarial audit
-npm run tengen -- audit
-```
-
-`deploy` writes `entry.body`, `entry.iv`, `deploy.key`, `manifest.json`,
-and one file per blob under `blobs/`. The `deploy.key` file is 32 bytes of
-raw entropy; treat it as a password for the package.
-
-## Threat model (what Tengen tries to defend against)
-
-- Passive network observers of blobs at rest.
-- Eavesdropping on update approval traffic.
-- Reconnaissance scans probing for real vs decoy blobs.
-- Per-byte tampering of blobs between build and run.
-- Bait-and-switch of update bundles.
-- Casual devtools / debugger attachment.
-
-## Non-goals (what Tengen does NOT defend against)
-
-- Side-channel attacks (power, EM, cache, branch prediction).
-- Compromise of the signer's own long-term key material.
-- A determined reverse engineer on the runtime host (use hardware
-  enclaves for that tier).
-- Denial of service (availability is not a design goal).
-- Sovereign / legal compulsion of signers.
-
-## Contributing
-
-Issue reports and adversarial test cases welcome. Do not submit code that
-removes Security Boundary comments, adds UI, reintroduces database
-dependencies, or widens the threat-model claims without a corresponding
-cryptographic proof.
+PolyForm Noncommercial 1.0.0. See `LICENSE` and `NOTICE.md`.
+Commercial licensing: contact the repository owner.
