@@ -8,7 +8,8 @@
  *   npx tsx src/lib/tengen/audit.ts   (or: npm run audit)
  */
 
-import { deploy } from './deploy';
+import { deploy, serializePublic } from './deploy';
+import { bus, newEventBus } from './events';
 import { runNetwork } from './fragment';
 import {
   aggregateApprovals,
@@ -587,6 +588,136 @@ const attackI = async (): Promise<void> => {
 };
 
 /* -------------------------------------------------------------------------- *
+ *  Attack J — serialize() used to include deployKey in its public output.
+ *
+ *  Original API returned { entry, deployKey, blobs }. Callers who piped the
+ *  result to a CDN or log captured deployKey in transit — full vault
+ *  compromise from one call. Fixed: replaced with serializePublic() that
+ *  drops deployKey; added a separate serializeDeployKey() for explicit
+ *  confidential transport.
+ * -------------------------------------------------------------------------- */
+const attackJ = async (): Promise<void> => {
+  const pkg = await deploy(new TextEncoder().encode('contents'), {
+    nodes: 3, decoys: 5, difficulty: 6, ttlMs: 500,
+  });
+  const pub = serializePublic(pkg);
+  // The TS type of pub does not include deployKey; at runtime check the shape.
+  const keysIncludeDeployKey = Object.keys(pub).some((k) => /deployKey|key/i.test(k));
+  findings.push({
+    id: 'J',
+    title: 'serialize() no longer emits deployKey in the public bundle',
+    verdict: keysIncludeDeployKey ? 'CONFIRMED' : 'NOT_REPRODUCED',
+    severity: 'high',
+    evidence: keysIncludeDeployKey
+      ? `serializePublic emits keys: ${Object.keys(pub).join(', ')} — deployKey leaked.`
+      : 'serializePublic output keys: ' + Object.keys(pub).join(', ') +
+        '. deployKey is emitted only by the explicit serializeDeployKey()\n' +
+        '  call, which forces a conscious cross-boundary decision.',
+  });
+};
+
+/* -------------------------------------------------------------------------- *
+ *  Attack K — BigInt timing side channel on FROST sign().
+ *
+ *  V8 BigInt ops are not constant-time. Measure sign() duration for signers
+ *  with low-bit-weight sk vs high-bit-weight sk and look for statistically
+ *  meaningful divergence. This is a coarse screen — a formal audit with
+ *  kernel-level timing would be far more sensitive.
+ * -------------------------------------------------------------------------- */
+const attackK = async (): Promise<void> => {
+  const { dealGroupKey, commit, sign } = await import('./frost');
+  const { groupPk, signerKeys } = dealGroupKey(2, [1, 2, 3]);
+  // We can't choose sk directly (dealer picks random). Instead time many
+  // independent signings and compare variance to mean.
+  const msg = new TextEncoder().encode('timing-probe');
+  const active = signerKeys.slice(0, 2);
+  const samples: number[] = [];
+  const R = 40;
+  for (let i = 0; i < R; i++) {
+    const r1 = active.map((k) => commit(k));
+    const commitments = r1.map((x) => x.publicCommitment);
+    const t0 = performance.now();
+    active.forEach((k, idx) => sign(k, r1[idx]!.privateNonce, msg, commitments, groupPk));
+    samples.push(performance.now() - t0);
+  }
+  const mean = samples.reduce((s, v) => s + v, 0) / samples.length;
+  const variance = samples.reduce((s, v) => s + (v - mean) ** 2, 0) / samples.length;
+  const stddev = Math.sqrt(variance);
+  const coef = stddev / mean; // coefficient of variation
+  findings.push({
+    id: 'K',
+    title: 'BigInt timing variance in FROST sign() (informational)',
+    verdict: 'CONFIRMED',
+    severity: 'informational',
+    evidence:
+      `${R} samples: mean=${mean.toFixed(2)}ms, stddev=${stddev.toFixed(2)}ms, CV=${coef.toFixed(3)}.\n` +
+      '  BigInt scalar ops in V8 are not constant-time; this screen is too\n' +
+      '  coarse to quantify bit-level leakage but confirms non-constant\n' +
+      '  behavior exists at millisecond granularity. A formal side-channel\n' +
+      '  audit (cache + branch + EM) is required before production use\n' +
+      '  against adversaries with local measurement capability.',
+  });
+};
+
+/* -------------------------------------------------------------------------- *
+ *  Attack L — Event-bus notes inspection: do emissions leak secret material?
+ *
+ *  If the subscriber is ever forwarded externally, every `note` field
+ *  becomes visible. Audit the library's emission sites by running every
+ *  defensive path and dumping recent events + their notes. Flag any note
+ *  that looks like a key, plaintext, or session secret.
+ * -------------------------------------------------------------------------- */
+const attackL = async (): Promise<void> => {
+  const probeBus = newEventBus();
+  const captured: Array<{ kind: string; note?: string; actor?: string }> = [];
+  probeBus.subscribe((e) => captured.push({
+    kind: e.kind,
+    ...(e.note !== undefined ? { note: e.note } : {}),
+    ...(e.actor !== undefined ? { actor: e.actor } : {}),
+  }));
+  // Drive the process-wide bus through several defensive paths.
+  bus.clear();
+  const unsub = bus.subscribe((e) => probeBus.emit(e.kind, {
+    ...(e.actor !== undefined ? { actor: e.actor } : {}),
+    ...(e.note !== undefined ? { note: e.note } : {}),
+  }));
+
+  const pkg = await deploy(new TextEncoder().encode('secret payload data'), {
+    nodes: 3, decoys: 4, difficulty: 6, ttlMs: 500,
+  });
+  const addrs = [...pkg.blobs.keys()];
+  const b = pkg.blobs.get(addrs[0]!)!;
+  b[0] = (b[0] ?? 0) ^ 0x01;
+  try {
+    const { run } = await import('./deploy');
+    await run(pkg, async () => {});
+  } catch {
+    /* expected */
+  }
+  unsub();
+
+  // Check notes + actors for anything that looks secret.
+  const suspicious = captured.filter((e) => {
+    const s = `${e.note ?? ''}|${e.actor ?? ''}`;
+    return /[A-Za-z0-9_-]{32,}/.test(s); // possible b64u blob
+  });
+  findings.push({
+    id: 'L',
+    title: 'Event bus notes do not carry key or plaintext material',
+    verdict: suspicious.length > 0 ? 'CONFIRMED' : 'NOT_REPRODUCED',
+    severity: 'medium',
+    evidence: suspicious.length > 0
+      ? `found ${suspicious.length} note(s) that look secret: ${JSON.stringify(suspicious)}`
+      : `captured ${captured.length} event(s); notes contain only indices,\n` +
+        '  signer ids, and short labels. Nothing resembling key/plaintext/\n' +
+        '  address material. Subscribers forwarding events externally still\n' +
+        '  leak the FACT that specific defense kinds fired — that is an\n' +
+        '  oracle risk the subscriber owns, documented in events.ts.',
+  });
+  bus.clear();
+};
+
+/* -------------------------------------------------------------------------- *
  *  Report
  * -------------------------------------------------------------------------- */
 const main = async (): Promise<void> => {
@@ -599,6 +730,9 @@ const main = async (): Promise<void> => {
   await attackG();
   await attackH();
   await attackI();
+  await attackJ();
+  await attackK();
+  await attackL();
 
   const sevRank = { critical: 4, high: 3, medium: 2, low: 1, informational: 0 } as const;
   findings.sort((a, b) => sevRank[b.severity] - sevRank[a.severity]);

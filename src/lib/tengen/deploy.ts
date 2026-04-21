@@ -85,15 +85,35 @@ export const run = async (
   );
 };
 
-/** Serialize a package into a wire-ready object (e.g., for network dispatch). */
-export const serialize = (pkg: DeploymentPackage): {
+/**
+ * Serialize the PUBLIC portion of a package — everything that can safely
+ * travel over an untrusted channel (CDN, DHT, etc.). Crucially this does
+ * NOT include `deployKey`, which is the 32-byte secret that unlocks the
+ * entry envelope. Publishing deployKey alongside blobs defeats the
+ * entire scheme (audit finding J).
+ *
+ * If you also need to ship `deployKey`, use `serializeDeployKey()`
+ * separately and transport it on a different, confidential channel.
+ */
+export const serializePublic = (pkg: DeploymentPackage): {
   entry: { body: string; iv: string };
-  deployKey: string;
   blobs: Array<{ addr: string; body: string }>;
+  realCount: number;
+  decoyCount: number;
 } => ({
   entry: { body: b64u.encode(pkg.entry.body), iv: b64u.encode(pkg.entry.iv) },
-  deployKey: b64u.encode(pkg.deployKey),
   blobs: [...pkg.blobs.entries()].map(([addr, body]) => ({ addr, body: b64u.encode(body) })),
+  realCount: pkg.realCount,
+  decoyCount: pkg.decoyCount,
 });
+
+/**
+ * Serialize ONLY the deployKey as b64u. Explicit, standalone call to make
+ * it obvious in code review when a key is crossing a boundary. Treat the
+ * returned string as a password: never log, never commit, never store
+ * alongside the public portion.
+ */
+export const serializeDeployKey = (pkg: DeploymentPackage): string =>
+  b64u.encode(pkg.deployKey);
 
 export type { NodeBlob, EntryEnvelope, FragmentOptions, RunChunk };

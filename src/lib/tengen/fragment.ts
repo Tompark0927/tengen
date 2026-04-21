@@ -14,6 +14,7 @@ import {
   openChannel,
   type EdgePuzzle,
 } from './channel';
+import { bus } from './events';
 
 /**
  * Source → executable network.
@@ -245,6 +246,7 @@ export const runNetwork = async (
     const { deploymentRoot, rootsEqual } = await import('./integrity');
     const actual = await deploymentRoot(options.blobs, entry.iv);
     if (!rootsEqual(actual, expectedRoot)) {
+      bus.emit('merkle-mismatch', { note: 'deployment root differs from runtime blobs' });
       zeroize(currAddr, currKey, expectedRoot);
       throw new Error('runtime: integrity check failed');
     }
@@ -258,23 +260,34 @@ export const runNetwork = async (
 
   for (let i = 0; i < chainLen; i++) {
     if (options?.isObserved && (await options.isObserved())) {
+      bus.emit('observer-detected', { note: `hop ${i}` });
       zeroize(currAddr, currKey);
       throw new Error('runtime: observation detected');
     }
     const addrStr = b64u.encode(currAddr);
     const body = await lookup(addrStr);
-    if (!body) throw new Error(`runtime: missing node ${i}`);
+    if (!body) {
+      bus.emit('fetch-blob-missing', { note: `node ${i}` });
+      throw new Error(`runtime: missing node ${i}`);
+    }
 
     // Hold the node key inside a TTL-gated channel. If downstream work
     // exceeds ttl, the key evaporates and the chain snaps.
     const ch = openChannel(currKey.slice(), ttlMs);
     const live = ch.use();
-    if (!live) throw new Error('runtime: channel closed before use');
+    if (!live) {
+      bus.emit('channel-expired-mid-run', { note: `hop ${i}` });
+      throw new Error('runtime: channel closed before use');
+    }
 
     const iv = await ivFor(live, currAddr);
     let payload: Uint8Array;
     try {
       payload = await aesGcmDecrypt(live, iv, body, currAddr);
+    } catch (e) {
+      bus.emit('aes-gcm-tag-failure', { note: `hop ${i}` });
+      ch.close();
+      throw e;
     } finally {
       ch.close();
     }

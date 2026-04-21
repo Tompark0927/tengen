@@ -1,6 +1,7 @@
 import { ed25519 } from '@noble/curves/ed25519';
 import { sha512 } from '@noble/hashes/sha512';
 import { concat, randomBytes, zeroize } from './primitives';
+import { bus } from './events';
 
 /**
  * FROST-Ed25519 (trusted-dealer variant).
@@ -250,6 +251,7 @@ export const sign = (
   // different messages leaks sk_i via linear algebra (audit finding G). We
   // treat a zeroed nonce as "already burned" and refuse.
   if (nonce.d === 0n || nonce.e === 0n) {
+    bus.emit('nonce-reuse-attempt', { note: `signer ${key.id}` });
     throw new Error('frost: nonce already used (single-shot required)');
   }
   if (!commitments.some((c) => c.id === key.id)) {

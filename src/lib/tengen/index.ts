@@ -87,7 +87,14 @@ export {
   type Channel,
 } from './channel';
 
-export { deploy, run, serialize, type DeploymentPackage, type RunGuard } from './deploy';
+export {
+  deploy,
+  run,
+  serializePublic,
+  serializeDeployKey,
+  type DeploymentPackage,
+  type RunGuard,
+} from './deploy';
 
 export {
   merkleRoot,
@@ -146,3 +153,14 @@ export {
 } from './quorum';
 
 export { zeroize, randomBytes, b64u } from './primitives';
+
+export {
+  bus,
+  newEventBus,
+  type EventBus,
+  type Event,
+  type EventKind,
+  type Severity,
+  type Subscriber,
+  type Unsubscribe,
+} from './events';

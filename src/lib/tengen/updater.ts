@@ -16,6 +16,7 @@ import {
   zeroize,
 } from './primitives';
 import { deploymentRoot } from './integrity';
+import { bus } from './events';
 import type { DeploymentPackage } from './deploy';
 
 /**
@@ -147,6 +148,7 @@ export const installUpdate = async (
 ): Promise<DeploymentPackage> => {
   // (1) Bundle must be addressed to THIS installer. Catches misrouted bundles.
   if (!bytesEqual(bundle.installerPk, installer.pk)) {
+    bus.emit('bundle-misaddressed');
     throw new Error('updater: bundle not addressed to this installer');
   }
 
@@ -158,11 +160,13 @@ export const installUpdate = async (
     installer.pk,
   );
   if (!bytesEqual(bundle.challenge.boundTo, expectedBinding)) {
+    bus.emit('bundle-binding-mismatch');
     throw new Error('updater: challenge not bound to this (package, installer) pair');
   }
 
   // (3) Verify the FROST signature over the challenge-derived message.
   if (!verifyApproval(bundle.signature, bundle.challenge, groupPk, policy, now)) {
+    bus.emit('signature-verify-failed');
     throw new Error('updater: signature did not verify');
   }
 
