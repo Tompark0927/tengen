@@ -1,0 +1,19 @@
+# tengen's own scanner dogfoods to scanner rules. Skip files that contain
+# INTENTIONAL vulnerable examples used as test fixtures or attack demos.
+# Format: <detector-id>:<file-regex>   or <detector-id>   or *:<file-regex>
+
+# Scanner unit tests declare synthetic vulnerable snippets as strings to
+# verify the detectors fire. They are not real app code.
+*:src/lib/tengen/scanner\.test\.ts
+
+# Adversarial self-audit deliberately constructs attack scenarios to
+# re-verify mitigations. The snippets are intentionally "bad".
+*:src/lib/tengen/audit\.ts
+
+# Fuzz harness fabricates randomized inputs that occasionally look like
+# vulnerable patterns to a regex scanner.
+*:src/lib/tengen/fuzz\.ts
+
+# The AI-antipatterns catalogue shows bad-then-good examples and will
+# light up every rule; that is the point of the document.
+*:docs/AI_ANTIPATTERNS\.md

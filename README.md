@@ -47,7 +47,7 @@ production use, commission an audit (`AUDIT_RFP.md` is ready to send).
 Requires **Node 22+**.
 
 ```bash
-git clone https://github.com/Tompark0927/tengen
+git clone https://github.com/tengen-dev/tengen
 cd tengen
 npm install
 ```

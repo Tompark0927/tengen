@@ -41,7 +41,7 @@ jobs:
       # Option A — install from the public repo at a pinned commit.
       - name: Install tengen (from GitHub)
         run: |
-          git clone --depth 1 https://github.com/Tompark0927/tengen /tmp/tengen
+          git clone --depth 1 https://github.com/tengen-dev/tengen /tmp/tengen
           cd /tmp/tengen
           npm ci --omit=optional
 

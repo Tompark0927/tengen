@@ -5,7 +5,7 @@
 **Scope contact:** contact via GitHub issues on the repository
 (anonymized during pre-audit phase; will be updated to a dedicated
 security mailbox before engagement).
-**Repository:** https://github.com/Tompark0927/tengen  (private — access granted per engagement)
+**Repository:** https://github.com/tengen-dev/tengen  (private — access granted per engagement)
 
 **Proposed engagement length:** 2–4 weeks of reviewer time, plus 1 week
 for response + re-review after fixes.

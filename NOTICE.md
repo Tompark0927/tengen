@@ -46,7 +46,7 @@ Distributions of Tengen or derived works must retain a copy of the
 `LICENSE` file and the following notice:
 
 > Required Notice: Copyright 2026 Tengen contributors
-> (https://github.com/Tompark0927/tengen)
+> (https://github.com/tengen-dev/tengen)
 
 ## Warranty and liability
 
